@@ -1,15 +1,22 @@
+import json
 import time
 from typing import Any, Callable
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from android import AndroidDevice
 from mobile_tools import build_phone_tools
-from langchain.agents.middleware import ToolCallRequest, before_model, AgentState, wrap_tool_call
+from langchain.agents.middleware import (
+    AgentState,
+    ToolCallRequest,
+    before_model,
+    wrap_tool_call,
+)
 from langgraph.runtime import Runtime
 from langgraph.types import Command
-from typing import Any
 
-from utils import img_to_base64, xml_to_toon
+from ui_dict_processing import process_ui_dict
+from utils import img_to_base64
 
 
 class PhoneAgentState(AgentState):
@@ -33,11 +40,12 @@ def remember_tool_invocations(
     return result
 
 
-def build_create_custom_instructions(device):
-    @before_model
+def build_create_custom_instructions(device: AndroidDevice):
+    @before_model(state_schema=PhoneAgentState)
     def create_custom_instructions(state: PhoneAgentState, runtime: Runtime) -> dict[str, Any] | None:
         goal = state.get("goal", "")
-        ui_dump = xml_to_toon(device.dump_ui())
+        ui_dump = process_ui_dict(device.dump_ui()["hierarchy"])
+        ui_text = json.dumps(ui_dump, ensure_ascii=False, indent=2)
         synthetic_messages = [
             SystemMessage(
                 content=(
@@ -65,7 +73,7 @@ def build_create_custom_instructions(device):
             synthetic_messages.append(
                 HumanMessage(
                     content=[
-                        {"type": "text", "text": ui_dump},
+                        {"type": "text", "text": ui_text},
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:image/jpeg;base64,{img_to_base64(screen_bytes)}"},
@@ -85,10 +93,9 @@ def build_create_custom_instructions(device):
 
 
 def build_agent(llm, device):
-    agent = create_agent(
+    return create_agent(
         model=llm,
         tools=build_phone_tools(device),
         state_schema=PhoneAgentState,
         middleware=[build_create_custom_instructions(device), remember_tool_invocations],  # type: ignore
     )
-    return agent

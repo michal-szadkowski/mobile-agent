@@ -20,9 +20,9 @@ def build_phone_tools(device: AndroidDevice):
         return device.tap_on_text(text)
 
     @tool
-    def phone_swipe(x1: int, y1: int, x2: int, y2: int, duration: float = 0.2) -> str:
+    def phone_swipe(x1: int, y1: int, x2: int, y2: int) -> str:
         """Swipe from (x1, y1) to (x2, y2) using absolute pixel coordinates."""
-        device.swipe(x1, y1, x2, y2, duration)
+        device.swipe(x1, y1, x2, y2, 0.2)
         return f"Swiped from ({x1}, {y1}) to ({x2}, {y2})"
 
     @tool

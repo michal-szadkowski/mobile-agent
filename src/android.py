@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from io import BytesIO
 import uiautomator2 as u2
+from xmltodict import parse
 
 
 @dataclass
@@ -48,8 +49,8 @@ class AndroidDevice:
     def app_start(self, package: str) -> None:
         self.d.app_start(package)
 
-    def dump_ui(self) -> str:
-        return self.d.dump_hierarchy()
+    def dump_ui(self) -> dict:
+        return parse(self.d.dump_hierarchy())
 
     def screenshot(self) -> bytes | None:
         image = self.d.screenshot()
