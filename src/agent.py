@@ -1,101 +1,97 @@
 import json
 import time
-from typing import Any, Callable
-from langchain.agents import create_agent
-from langchain.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage
-from langgraph.graph.message import REMOVE_ALL_MESSAGES
-from android import AndroidDevice
-from mobile_tools import build_phone_tools
-from langchain.agents.middleware import (
-    AgentState,
-    ToolCallRequest,
-    before_model,
-    wrap_tool_call,
-)
-from langgraph.runtime import Runtime
-from langgraph.types import Command
+from typing import Annotated, TypedDict
+from langchain.chat_models import BaseChatModel
+from langchain.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START
+from langgraph.graph.message import BaseMessage, StateGraph, add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from ui_dict_processing import process_ui_dict
 from utils import img_to_base64
+from android import AndroidDevice
+from mobile_tools import build_phone_tools
 
 
-class PhoneAgentState(AgentState):
+class PhoneState(TypedDict):
     goal: str
-    tools: list[str]
+    ui_dump: str
+    screen_b64: str
+
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
-@wrap_tool_call
-def remember_tool_invocations(
-    request: ToolCallRequest,
-    handler: Callable[[ToolCallRequest], ToolMessage | Command],
-) -> ToolMessage | Command:
-    print(f"Executing tool: {request.tool_call['name']}")
-    print(f"Arguments: {request.tool_call['args']}")
+def create_graph(llm: BaseChatModel, device: AndroidDevice):
+    tools = build_phone_tools(device)
+    llm_with_tools = llm.bind_tools(tools)
 
-    result = handler(request)
-    if isinstance(result, ToolMessage):
-        request.state["tools"].append(
-            f"{request.tool_call['name']} {request.tool_call['args']}, result: {result.content}"
-        )
-    return result
-
-
-def build_create_custom_instructions(device: AndroidDevice):
-    @before_model(state_schema=PhoneAgentState)
-    def create_custom_instructions(state: PhoneAgentState, runtime: Runtime) -> dict[str, Any] | None:
-        goal = state.get("goal", "")
-        ui_dump = process_ui_dict(device.dump_ui()["hierarchy"])
+    def observe(state: PhoneState):
+        d = device
+        time.sleep(1)
+        ui_dump = process_ui_dict(d.dump_ui()["hierarchy"])
         ui_text = json.dumps(ui_dump, ensure_ascii=False, indent=2)
-        synthetic_messages = [
+
+        screen_bytes = d.screenshot()
+        screen_b64 = f"data:image/jpeg;base64,{img_to_base64(screen_bytes)}" if screen_bytes is not None else None
+
+        return {
+            "ui_dump": ui_text,
+            "screen_b64": screen_b64,
+        }
+
+    def run_model(state: PhoneState):
+        prompt = [
             SystemMessage(
                 content=(
-                    "Jesteś agentem sterującym Androidem. "
-                    "Jeśli potrzebujesz interakcji z urządzeniem, użyj dostępnych narzędzi."
+                    "You are an Android agent. "
+                    "You must achieve the user's goal using the available tools. "
+                    "If the task is already complete or you do not need a tool, respond normally. "
+                    "Do not invent elements that are not visible on the screen. "
+                    "Do not stop until you are sure you have finished the task and can confirm it on screenshot or ui hierarchy "
+                    "You should act without feedback from the user."
                 )
             ),
+            *state.get("messages", []),
             HumanMessage(
                 content=[
                     {
                         "type": "text",
-                        "text": f"Cel użytkownika:\n{goal}\n\n Wybierz kolejną akcję na podstawie wyłącznie powyższego stanu.",
+                        "text": f"User goal: {state.get('goal', '')}\n",
                     },
                     {
                         "type": "text",
-                        "text": f"Historia twoich akcji: \n\n {'\n'.join(state.get("tools", []))}",
+                        "text": f"Current ui state is: \n{state.get("ui_dump", "")} \n Which is visible the attached screenshot.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": state.get("screen_b64", "")},
                     },
                 ]
             ),
         ]
+        response = llm_with_tools.invoke(prompt)
+        return {"messages": [response]}
 
-        time.sleep(1)
-        screen_bytes = device.screenshot()
-        if screen_bytes is not None:
-            synthetic_messages.append(
-                HumanMessage(
-                    content=[
-                        {"type": "text", "text": ui_text},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_to_base64(screen_bytes)}"},
-                        },
-                    ],
-                ),
-            )
+    tool_node = ToolNode(build_phone_tools(device))
 
-        return {
-            "messages": [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *synthetic_messages,
-            ]
-        }
+    builder = StateGraph(PhoneState)
 
-    return create_custom_instructions
+    builder.add_node("observe", observe)
+    builder.add_node("run_model", run_model)
+    builder.add_node("tools", tool_node)
 
+    builder.add_edge(START, "observe")
+    builder.add_edge("observe", "run_model")
 
-def build_agent(llm, device):
-    return create_agent(
-        model=llm,
-        tools=build_phone_tools(device),
-        state_schema=PhoneAgentState,
-        middleware=[build_create_custom_instructions(device), remember_tool_invocations],  # type: ignore
+    builder.add_conditional_edges(
+        "run_model",
+        tools_condition,
+        {
+            "tools": "tools",
+            "__end__": END,
+        },
     )
+
+    builder.add_edge("tools", "observe")
+
+    return builder.compile()

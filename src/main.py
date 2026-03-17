@@ -1,34 +1,32 @@
 import dotenv
 from langchain.messages import AIMessageChunk
-from langchain_deepseek import ChatDeepSeek
+from langchain_openrouter import ChatOpenRouter
 
-
-from agent import build_agent, PhoneAgentState
+from agent import create_graph
 from android import AndroidDevice
 
 dotenv.load_dotenv()
 
 device = AndroidDevice.connect()
 
-# llm = ChatOpenRouter(
-#     model="openai/gpt-5-mini",
-# )
-
-llm = ChatDeepSeek(
-    model="Qwen3.5-9B",
-    api_base="http://localhost:8080/v1",
-    extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+llm = ChatOpenRouter(
+    model="moonshotai/kimi-k2.5",
 )
 
+# llm = ChatDeepSeek(
+#     model="Qwen3.5-9B",
+#     api_base="http://localhost:8080/v1",
+#     extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+# )
 
-agent = build_agent(llm, device)
+
+agent = create_graph(llm, device)
 
 
 message = "otwórz stronę reddit.com"
-initial_state: PhoneAgentState = {"messages": [], "goal": message, "tools": []}
 
 for chunk in agent.stream(
-    initial_state,  # type: ignore[arg-type]
+    {"goal": message},  # type: ignore[arg-type]
     stream_mode=["messages"],
     version="v2",
 ):

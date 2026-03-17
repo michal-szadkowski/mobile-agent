@@ -5,7 +5,7 @@ from android import AndroidDevice
 def build_phone_tools(device: AndroidDevice):
     @tool
     def phone_tap(x: int, y: int) -> str:
-        """Tap the screen at absolute pixel coordinates (x, y). Use this tool only when other tap functions are insufficient."""
+        """Tap the screen at absolute pixel coordinates (x, y)."""
         device.tap(x, y)
         return f"Tapped at ({x}, {y})"
 
@@ -30,6 +30,12 @@ def build_phone_tools(device: AndroidDevice):
         """Type text into the currently focused input field."""
         device.type_text(text)
         return f"Typed text: {text}"
+
+    @tool
+    def phone_submit() -> str:
+        """Trigger the current keyboard submit/search/confirm action. Use after typing into search or input fields when the keyboard should confirm the input."""
+        device.press_enter()
+        return "Triggered keyboard submit/search action"
 
     @tool
     def phone_back() -> str:

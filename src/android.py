@@ -40,6 +40,9 @@ class AndroidDevice:
     def type_text(self, text: str) -> None:
         self.d.send_keys(text)
 
+    def press_enter(self) -> None:
+        self.d.press("enter")
+
     def press_back(self) -> None:
         self.d.press("back")
 
